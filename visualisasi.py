@@ -3,87 +3,102 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-# --- 1. MEMUAT DATA ---
-st.set_page_config(page_title="Dashboard Kuesioner", layout="wide")
+# Konfigurasi Halaman
+st.set_page_config(page_title="Kuesioner Analytics Dashboard", layout="wide")
 
-try:
-    df = pd.read_excel("data_kuesioner.xlsx")
-except FileNotFoundError:
-    # Sesuaikan dengan nama file CSV Anda jika file excel tidak ada
-    df = pd.read_csv("data_kuesioner (1).xlsx - Kuesioner.csv")
-
-# Persiapan Data
-data_pertanyaan = df.drop(columns=['Partisipan'])
-skala_ke_angka = {'SS': 6, 'S': 5, 'CS': 4, 'CTS': 3, 'TS': 2, 'STS': 1}
-urutan_label = ['SS', 'S', 'CS', 'CTS', 'TS', 'STS']
-
-# --- HEADER ---
 st.title("📊 Dashboard Visualisasi Data Kuesioner")
-st.markdown("---")
+st.markdown("Unggah file hasil survei Anda untuk melihat analisis distribusi jawaban.")
 
-# --- 2. DISTRIBUSI KESELURUHAN (Bar & Pie Chart) ---
-st.subheader("🎯 Distribusi Jawaban Keseluruhan")
-kol1, kol2 = st.columns(2)
+# --- FITUR INPUT DATA ---
+uploaded_file = st.sidebar.file_uploader("Pilih file Excel atau CSV", type=['xlsx', 'csv'])
 
-seluruh_jawaban = data_pertanyaan.stack().value_counts().reindex(urutan_label).reset_index()
-seluruh_jawaban.columns = ['Jawaban', 'Jumlah']
+if uploaded_file is not None:
+    # Membaca data
+    try:
+        if uploaded_file.name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file)
+        else:
+            df = pd.read_excel(uploaded_file)
+        
+        # Persiapan Data (Menghilangkan kolom non-kuesioner jika ada)
+        # Asumsi: Kolom pertama adalah 'Partisipan', sisanya adalah pertanyaan
+        data_q = df.drop(columns=['Partisipan']) if 'Partisipan' in df.columns else df
+        
+        mapping = {'SS': 6, 'S': 5, 'CS': 4, 'CTS': 3, 'TS': 2, 'STS': 1}
+        order = ['STS', 'TS', 'CTS', 'CS', 'S', 'SS'] # Urutan untuk grafik
+        
+        # --- PRE-PROCESSING UNTUK GRAFIK ---
+        flat_data = data_q.stack().reset_index()
+        flat_data.columns = ['Index', 'Pertanyaan', 'Jawaban']
+        
+        # 1. Distribusi Keseluruhan (Bar & Pie)
+        overall_dist = flat_data['Jawaban'].value_counts().reindex(order).fillna(0).reset_index()
+        
+        # 2. Rata-rata per Pertanyaan
+        df_numeric = data_q.replace(mapping)
+        avg_scores = df_numeric.mean().reset_index()
+        avg_scores.columns = ['Pertanyaan', 'Rata-rata Skor']
 
-with kol1:
-    fig_bar = px.bar(seluruh_jawaban, x='Jawaban', y='Jumlah', 
-                     title="Distribusi Jawaban (Bar Chart)",
-                     color='Jawaban', color_discrete_sequence=px.colors.qualitative.Pastel)
-    st.plotly_chart(fig_bar, use_container_width=True)
+        # 3. Kategori Positif, Netral, Negatif
+        def categorize(val):
+            if val in ['SS', 'S']: return 'Positif'
+            if val in ['CS']: return 'Netral'
+            return 'Negatif'
+        
+        flat_data['Kategori'] = flat_data['Jawaban'].apply(categorize)
+        cat_dist = flat_data['Kategori'].value_counts().reset_index()
 
-with kol2:
-    fig_pie = px.pie(seluruh_jawaban, values='Jumlah', names='Jawaban', 
-                     title="Proporsi Jawaban (Pie Chart)",
-                     color_discrete_sequence=px.colors.qualitative.Pastel)
-    st.plotly_chart(fig_pie, use_container_width=True)
+        # --- LAYOUT DASHBOARD ---
+        
+        # Row 1: Ringkasan Umum
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("Distribusi Jawaban (Bar)")
+            fig1 = px.bar(overall_dist, x='Jawaban', y='count', color='Jawaban',
+                          color_discrete_sequence=px.colors.qualitative.Pastel)
+            st.plotly_chart(fig1, use_container_width=True)
 
-# --- 3. STACKED BAR (Distribusi per Pertanyaan) ---
-st.subheader("📚 Distribusi Jawaban per Pertanyaan")
-df_stacked = data_pertanyaan.apply(pd.Series.value_counts).fillna(0).T
-df_stacked = df_stacked.reindex(columns=urutan_label)
+        with col2:
+            st.subheader("Proporsi Jawaban (Pie)")
+            fig2 = px.pie(overall_dist, names='Jawaban', values='count', hole=0.4)
+            st.plotly_chart(fig2, use_container_width=True)
 
-fig_stacked = px.bar(df_stacked, barmode='stack', 
-                     title="Stacked Bar: Jawaban per Pertanyaan",
-                     labels={'value': 'Jumlah Responden', 'index': 'Pertanyaan'})
-st.plotly_chart(fig_stacked, use_container_width=True)
+        # Row 2: Stacked Bar & Average
+        st.divider()
+        col3, col4 = st.columns([3, 2])
 
-# --- 4. RATA-RATA SKOR PER PERTANYAAN ---
-st.subheader("📈 Rata-rata Skor per Pertanyaan")
-skor_rata2 = data_pertanyaan.replace(skala_ke_angka).mean().reset_index()
-skor_rata2.columns = ['Pertanyaan', 'Rata-rata']
+        with col3:
+            st.subheader("Distribusi Jawaban per Pertanyaan")
+            # Menghitung silang Pertanyaan vs Jawaban
+            stacked_data = pd.crosstab(flat_data['Pertanyaan'], flat_data['Jawaban']).reindex(columns=order).fillna(0)
+            fig3 = px.bar(stacked_data, barmode='stack', orientation='h')
+            st.plotly_chart(fig3, use_container_width=True)
 
-fig_rata = px.bar(skor_rata2, x='Pertanyaan', y='Rata-rata', 
-                  title="Rata-rata Skor (Skala 1-6)",
-                  color='Rata-rata', color_continuous_scale='Viridis')
-st.plotly_chart(fig_rata, use_container_width=True)
+        with col4:
+            st.subheader("Rata-rata Skor per Pertanyaan")
+            fig4 = px.bar(avg_scores, x='Rata-rata Skor', y='Pertanyaan', orientation='h', 
+                          color='Rata-rata Skor', color_continuous_scale='Viridis')
+            st.plotly_chart(fig4, use_container_width=True)
 
-# --- 5. KATEGORI POSITIF, NETRAL, NEGATIF ---
-st.subheader("🎭 Distribusi Kategori Jawaban")
-flat_data = data_pertanyaan.stack()
-kat_pos = flat_data.isin(['SS', 'S']).sum()
-kat_net = flat_data.isin(['CS']).sum()
-kat_neg = flat_data.isin(['CTS', 'TS', 'STS']).sum()
+        # Row 3: Sentimen & Bonus (Heatmap)
+        st.divider()
+        col5, col6 = st.columns(2)
 
-df_kat = pd.DataFrame({
-    'Kategori': ['Positif', 'Netral', 'Negatif'],
-    'Jumlah': [kat_pos, kat_net, kat_neg]
-})
+        with col5:
+            st.subheader("Distribusi Kategori Sentimen")
+            fig5 = px.bar(cat_dist, x='Kategori', y='count', color='Kategori',
+                          color_discrete_map={'Positif':'green', 'Netral':'gray', 'Negatif':'red'})
+            st.plotly_chart(fig5, use_container_width=True)
 
-fig_kat = px.bar(df_kat, x='Kategori', y='Jumlah', 
-                 color='Kategori', 
-                 color_discrete_map={'Positif': 'green', 'Netral': 'gray', 'Negatif': 'red'},
-                 title="Distribusi Sentimen Jawaban")
-st.plotly_chart(fig_kat, use_container_width=True)
+        with col6:
+            st.subheader("🔥 Bonus: Heatmap Korelasi")
+            # Korelasi antar pertanyaan untuk melihat keterkaitan jawaban
+            corr = df_numeric.corr()
+            fig6 = px.imshow(corr, text_auto=True, aspect="auto", color_continuous_scale='RdBu_r')
+            st.plotly_chart(fig6, use_container_width=True)
 
-# --- 6. BONUS: HEATMAP (Implementasi Diagram Lainnya) ---
-st.subheader("🔥 Bonus: Heatmap Kepadatan Jawaban")
-# Mengonversi data ke angka untuk heatmap
-df_numeric = data_pertanyaan.replace(skala_ke_angka)
-fig_heat = px.imshow(df_numeric.T, 
-                     labels=dict(x="Responden", y="Pertanyaan", color="Skor"),
-                     title="Heatmap Pola Jawaban Responden",
-                     color_continuous_scale='RdYlGn')
-st.plotly_chart(fig_heat, use_container_width=True)
+    except Exception as e:
+        st.error(f"Terjadi kesalahan saat memproses data: {e}")
+else:
+    st.info("Silakan unggah file kuesioner di sidebar untuk memulai.")
