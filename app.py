@@ -115,4 +115,111 @@ try:
     st.plotly_chart(fig_heat, use_container_width=True)
 
 except Exception as e:
-    st.error(f"Gagal memuat data. Pastikan file CSV tersedia. Error: {e}")
+    st.error(f"Gagal memuat data. Pastikan file CSV tersedia. Error: {e}")import streamlit as st
+import pandas as pd
+import plotly.express as px
+
+# --- 1. KONFIGURASI HALAMAN ---
+st.set_page_config(page_title="Dashboard Analisis Kuesioner", layout="wide")
+
+# --- 2. FUNGSI MEMUAT DATA ---
+@st.cache_data
+def muat_data():
+    # Membaca data utama kuesioner
+    df_kuesioner = pd.read_csv("data_kuesioner (1).xlsx - Kuesioner.csv")
+    # Membaca teks pertanyaan asli
+    df_pertanyaan = pd.read_csv("data_kuesioner (1).xlsx - Pertanyaan.csv")
+    return df_kuesioner, df_pertanyaan
+
+try:
+    df, df_soal = muat_data()
+    
+    # Persiapan Data: Hapus kolom non-kuesioner
+    data_q = df.drop(columns=['Partisipan'])
+    
+    # Mapping Skala dan Urutan
+    skala_map = {'SS': 6, 'S': 5, 'CS': 4, 'CTS': 3, 'TS': 2, 'STS': 1}
+    urutan_label = ['SS', 'S', 'CS', 'CTS', 'TS', 'STS']
+    
+    # Membuat kamus untuk label hover (ID -> Teks Pertanyaan)
+    dict_soal = dict(zip(df_soal['ID'], df_soal['Pertanyaan']))
+
+    # --- TAMPILAN DASHBOARD ---
+    st.title("📊 Dashboard Visualisasi Data Kuesioner")
+    st.markdown(f"**Total Responden:** {len(df)} | **Total Pertanyaan:** {len(data_q.columns)}")
+    st.divider()
+
+    # --- BAGIAN 1: DISTRIBUSI KESELURUHAN (BAR & PIE) ---
+    st.subheader("🎯 Distribusi Jawaban Keseluruhan")
+    c1, c2 = st.columns(2)
+    
+    seluruh_data = data_q.stack().value_counts().reindex(urutan_label).reset_index()
+    seluruh_data.columns = ['Skala', 'Jumlah']
+
+    with c1:
+        fig_bar = px.bar(seluruh_data, x='Skala', y='Jumlah', color='Skala',
+                         title="Total Frekuensi Jawaban (Semua Pertanyaan)",
+                         color_discrete_sequence=px.colors.qualitative.Vivid)
+        st.plotly_chart(fig_bar, use_container_width=True)
+    
+    with c2:
+        fig_pie = px.pie(seluruh_data, values='Jumlah', names='Skala', 
+                         title="Proporsi Jawaban (%)",
+                         color_discrete_sequence=px.colors.qualitative.Vivid)
+        st.plotly_chart(fig_pie, use_container_width=True)
+
+    # --- BAGIAN 2: STACKED BAR PER PERTANYAAN ---
+    st.subheader("📚 Distribusi Jawaban per Butir Pertanyaan")
+    df_stack = data_q.apply(pd.Series.value_counts).fillna(0).T.reindex(columns=urutan_label)
+    df_stack['Teks_Soal'] = [dict_soal.get(i, i) for i in df_stack.index]
+    
+    fig_stack = px.bar(df_stack, barmode='stack', 
+                       title="Perbandingan Skala Jawaban Tiap ID",
+                       labels={'index': 'Kode Soal', 'value': 'Jumlah Responden'},
+                       hover_data={'Teks_Soal': True})
+    st.plotly_chart(fig_stack, use_container_width=True)
+
+    # --- BAGIAN 3: RATA-RATA SKOR ---
+    st.subheader("📈 Rata-rata Skor per Pertanyaan")
+    rata_skor = data_q.replace(skala_map).mean().reset_index()
+    rata_skor.columns = ['ID', 'Rata-rata']
+    rata_skor['Pertanyaan'] = rata_skor['ID'].map(dict_soal)
+
+    fig_avg = px.bar(rata_skor, x='ID', y='Rata-rata', 
+                     hover_data=['Pertanyaan'], color='Rata-rata',
+                     title="Skor Rata-rata (Konversi Angka 1-6)",
+                     color_continuous_scale='Bluered_r')
+    st.plotly_chart(fig_avg, use_container_width=True)
+
+    # --- BAGIAN 4: KATEGORI POSITIF, NETRAL, NEGATIF ---
+    st.subheader("🎭 Analisis Sentimen Jawaban")
+    flat = data_q.stack()
+    pos = flat.isin(['SS', 'S']).sum()
+    net = flat.isin(['CS']).sum()
+    neg = flat.isin(['CTS', 'TS', 'STS']).sum()
+    
+    df_sentimen = pd.DataFrame({
+        'Kategori': ['Positif (SS, S)', 'Netral (CS)', 'Negatif (CTS, TS, STS)'],
+        'Jumlah': [pos, net, neg]
+    })
+    
+    fig_sent = px.bar(df_sentimen, x='Kategori', y='Jumlah', color='Kategori',
+                      color_discrete_map={
+                          'Positif (SS, S)': '#00CC96',
+                          'Netral (CS)': '#AB63FA',
+                          'Negatif (CTS, TS, STS)': '#EF553B'
+                      }, title="Kelompok Sentimen Responden")
+    st.plotly_chart(fig_sent, use_container_width=True)
+
+    # --- BONUS: HEATMAP ---
+    st.subheader("🔥 Bonus: Heatmap Respon")
+    df_num = data_q.replace(skala_map)
+    fig_heat = px.imshow(df_num.T, 
+                         labels=dict(x="Responden", y="Pertanyaan", color="Skor"),
+                         color_continuous_scale='RdYlGn', # Merah ke Hijau
+                         aspect="auto",
+                         title="Peta Panas Jawaban (Warna Hijau = Sangat Setuju)")
+    st.plotly_chart(fig_heat, use_container_width=True)
+
+except Exception as e:
+    st.error(f"Terjadi kesalahan saat memproses file: {e}")
